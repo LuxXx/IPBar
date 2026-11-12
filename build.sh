@@ -24,8 +24,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
-    <key>NSLocationUsageDescription</key><string>IPBar uses Location Services only to read the name of your Wi-Fi network for the IP log. Your location is never requested or stored.</string>
-    <key>NSLocationWhenInUseUsageDescription</key><string>IPBar uses Location Services only to read the name of your Wi-Fi network for the IP log. Your location is never requested or stored.</string>
+    <key>NSLocationUsageDescription</key><string>IPBar logs the name of your Wi-Fi network and your approximate location (rounded, about 1 km by default) to a local history file. Nothing is sent anywhere except Apple's location service.</string>
+    <key>NSLocationWhenInUseUsageDescription</key><string>IPBar logs the name of your Wi-Fi network and your approximate location (rounded, about 1 km by default) to a local history file. Nothing is sent anywhere except Apple's location service.</string>
 </dict>
 </plist>
 PLIST

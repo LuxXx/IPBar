@@ -32,6 +32,7 @@ enum MenuBarStyle: String, CaseIterable, Identifiable {
 final class IPModel: ObservableObject {
     @Published private(set) var info: IPInfo?
     @Published private(set) var network: NetworkSnapshot?
+    @Published private(set) var deviceLocation: DeviceLocation?
     @Published private(set) var errorMessage: String?
     @Published private(set) var isLoading = false
     @Published private(set) var lastUpdated: Date?
@@ -51,8 +52,19 @@ final class IPModel: ObservableObject {
     @Published var logWiFiName: Bool {
         didSet {
             UserDefaults.standard.set(logWiFiName, forKey: "logWiFiName")
-            if logWiFiName { LocationPermission.shared.request() }
+            if logWiFiName { LocationService.shared.request() }
         }
+    }
+    @Published var logLocation: Bool {
+        didSet {
+            UserDefaults.standard.set(logLocation, forKey: "logLocation")
+            if logLocation { LocationService.shared.request() }
+            if !logLocation { deviceLocation = nil }
+        }
+    }
+    /// Decimal places kept for the real location: 1 ≈ 11 km, 2 ≈ 1 km, 3 ≈ 100 m.
+    @Published var locationPrecision: Int {
+        didSet { UserDefaults.standard.set(locationPrecision, forKey: "locationPrecision") }
     }
 
     private let monitor = NWPathMonitor()
@@ -68,9 +80,11 @@ final class IPModel: ObservableObject {
         notifyMode = defaults.string(forKey: "notifyMode").flatMap(NotifyMode.init) ?? .anyChange
         menuBarStyle = defaults.string(forKey: "menuBarStyle").flatMap(MenuBarStyle.init) ?? .flagAndIP
         logWiFiName = defaults.object(forKey: "logWiFiName") as? Bool ?? true
+        logLocation = defaults.object(forKey: "logLocation") as? Bool ?? true
+        locationPrecision = defaults.object(forKey: "locationPrecision") as? Int ?? 2
 
         if notifyMode != .off { Notifier.shared.requestAuthorization() }
-        if logWiFiName { LocationPermission.shared.request() }
+        if logWiFiName || logLocation { LocationService.shared.request() }
 
         // Network changes (Wi-Fi switch, VPN up/down): wait briefly for routes to settle.
         monitor.pathUpdateHandler = { [weak self] path in
@@ -120,12 +134,20 @@ final class IPModel: ObservableObject {
                 let (info, raw) = try await IPInfoClient.fetch(token: self.token)
                 try Task.checkCancellation()
                 let network = NetworkInfo.snapshot(path: self.currentPath, includeSSID: self.logWiFiName)
-                Notifier.shared.notifyIfNeeded(old: self.info, new: info, mode: self.notifyMode)
+                let location = self.logLocation
+                    ? await LocationService.shared.currentLocation(decimals: self.locationPrecision)
+                    : nil
+                try Task.checkCancellation()
+                Notifier.shared.notifyIfNeeded(
+                    old: self.info, new: info, mode: self.notifyMode,
+                    oldLocation: self.deviceLocation, newLocation: location
+                )
                 self.info = info
                 self.network = network
+                self.deviceLocation = location
                 self.errorMessage = nil
                 self.lastUpdated = Date()
-                IPLogger.shared.record(raw: raw, ip: info.ip, network: network, trigger: trigger)
+                IPLogger.shared.record(raw: raw, ip: info.ip, network: network, location: location, trigger: trigger)
             } catch is CancellationError {
                 return
             } catch let error as URLError where error.code == .cancelled {

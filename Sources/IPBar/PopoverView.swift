@@ -4,13 +4,15 @@ import SwiftUI
 struct PopoverView: View {
     @ObservedObject var model: IPModel
     let openSettings: () -> Void
+    let openHistory: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let info = model.info {
-                InfoGrid(info: info, network: model.network)
-                if let coordinate = info.coordinate {
-                    MapCard(coordinate: coordinate).id(info.loc)
+                InfoGrid(info: info, network: model.network, location: model.deviceLocation)
+                if info.coordinate != nil || model.deviceLocation != nil {
+                    MapCard(ipCoordinate: info.coordinate, ipLabel: info.city ?? info.ip, device: model.deviceLocation)
+                        .id("\(info.loc ?? "")|\(model.deviceLocation.map { "\($0.latitude),\($0.longitude)" } ?? "")")
                 }
             } else if model.isLoading {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 120)
@@ -22,7 +24,7 @@ struct PopoverView: View {
                     .foregroundStyle(.orange)
             }
 
-            Footer(model: model, openSettings: openSettings)
+            Footer(model: model, openSettings: openSettings, openHistory: openHistory)
         }
         .padding(16)
         .frame(width: 360)
@@ -32,6 +34,7 @@ struct PopoverView: View {
 private struct InfoGrid: View {
     let info: IPInfo
     let network: NetworkSnapshot?
+    let location: DeviceLocation?
 
     var body: some View {
         Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 10) {
@@ -45,6 +48,7 @@ private struct InfoGrid: View {
             row("Postal Code", info.postal)
             row("Time Zone", info.timezone)
             row("Coordinates", info.formattedCoordinates)
+            row("Your Location", location?.displayName, copy: location.map { "\($0.latitude),\($0.longitude)" })
             row("Network", network?.displayNetwork)
             row("VPN", network.map { $0.vpnInterface.map { "Active (\($0))" } ?? "Off" })
         }
@@ -96,32 +100,90 @@ private struct CopyableText: View {
     }
 }
 
-private struct MapCard: View {
-    let coordinate: CLLocationCoordinate2D
+/// Shows the IP's location and, when known, the Mac's real location.
+struct MapCard: View {
+    let ipCoordinate: CLLocationCoordinate2D?
+    let ipLabel: String
+    let device: DeviceLocation?
     @State private var position: MapCameraPosition
 
-    init(coordinate: CLLocationCoordinate2D) {
-        self.coordinate = coordinate
-        _position = State(initialValue: .region(MKCoordinateRegion(
-            center: coordinate,
-            span: MKCoordinateSpan(latitudeDelta: 0.5, longitudeDelta: 0.5)
-        )))
+    init(ipCoordinate: CLLocationCoordinate2D?, ipLabel: String, device: DeviceLocation?) {
+        self.ipCoordinate = ipCoordinate
+        self.ipLabel = ipLabel
+        self.device = device
+        let points = [ipCoordinate, device?.coordinate].compactMap { $0 }
+        _position = State(initialValue: Self.camera(for: points))
     }
 
     var body: some View {
         Map(position: $position) {
-            Marker("", coordinate: coordinate)
+            if let ipCoordinate, let device, !isSamePlace {
+                MapPolyline(coordinates: [device.coordinate, ipCoordinate])
+                    .stroke(.secondary, style: StrokeStyle(lineWidth: 2, dash: [5, 4]))
+            }
+            if let ipCoordinate {
+                Marker(device == nil ? ipLabel : "IP: \(ipLabel)", systemImage: "network", coordinate: ipCoordinate)
+                    .tint(.purple)
+            }
+            if let device {
+                Marker("You: \(device.city ?? "here")", systemImage: "location.fill", coordinate: device.coordinate)
+                    .tint(.blue)
+            }
         }
         .mapStyle(.standard(pointsOfInterest: .excludingAll))
         .frame(height: 200)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
+        .overlay(alignment: .bottomLeading) {
+            if let distance, !isSamePlace {
+                Text("\(distance) apart")
+                    .font(.caption2.weight(.medium))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(6)
+            }
+        }
+    }
+
+    private var meters: CLLocationDistance? {
+        guard let ipCoordinate, let device else { return nil }
+        return CLLocation(latitude: ipCoordinate.latitude, longitude: ipCoordinate.longitude)
+            .distance(from: CLLocation(latitude: device.latitude, longitude: device.longitude))
+    }
+
+    private var isSamePlace: Bool { (meters ?? 0) < 2_000 }
+
+    private var distance: String? {
+        meters.map {
+            Measurement(value: $0, unit: UnitLength.meters)
+                .formatted(.measurement(width: .abbreviated, usage: .road))
+        }
+    }
+
+    /// Frames all points with some padding; a single point gets a city-level zoom.
+    private static func camera(for points: [CLLocationCoordinate2D]) -> MapCameraPosition {
+        guard let first = points.first else { return .automatic }
+        let lats = points.map(\.latitude), lons = points.map(\.longitude)
+        let span = max(lats.max()! - lats.min()!, lons.max()! - lons.min()!)
+        if points.count == 1 || span < 0.02 {
+            return .region(MKCoordinateRegion(center: first, span: MKCoordinateSpan(latitudeDelta: 0.5, longitudeDelta: 0.5)))
+        }
+        let center = CLLocationCoordinate2D(latitude: (lats.max()! + lats.min()!) / 2, longitude: (lons.max()! + lons.min()!) / 2)
+        return .region(MKCoordinateRegion(
+            center: center,
+            span: MKCoordinateSpan(
+                latitudeDelta: min((lats.max()! - lats.min()!) * 1.6 + 0.5, 170),
+                longitudeDelta: min((lons.max()! - lons.min()!) * 1.6 + 0.5, 360)
+            )
+        ))
     }
 }
 
 private struct Footer: View {
     @ObservedObject var model: IPModel
     let openSettings: () -> Void
+    let openHistory: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
@@ -136,6 +198,12 @@ private struct Footer: View {
             }
 
             Spacer()
+
+            Button(action: openHistory) {
+                Image(systemName: "clock.arrow.circlepath")
+            }
+            .buttonStyle(.borderless)
+            .help("History")
 
             if model.isLoading {
                 ProgressView().controlSize(.small)
@@ -154,6 +222,7 @@ private struct Footer: View {
                 Button("Show Log in Finder") {
                     NSWorkspace.shared.activateFileViewerSelecting([IPLogger.shared.fileURL])
                 }
+                Button("History…", action: openHistory)
                 Button("Settings…", action: openSettings)
                 Divider()
                 Button("Quit") { NSApp.terminate(nil) }
@@ -172,6 +241,7 @@ private struct Footer: View {
             ("IP", info.ip), ("Hostname", info.hostname), ("ISP", info.org),
             ("Country", info.countryName), ("Region", info.region), ("City", info.city),
             ("Postal", info.postal), ("Time Zone", info.timezone), ("Location", info.loc),
+            ("Your Location", model.deviceLocation.map { "\($0.displayName) (\($0.latitude),\($0.longitude))" }),
             ("Network", model.network?.displayNetwork), ("VPN", model.network.map { $0.vpn ? "Active" : "Off" }),
         ]
         .compactMap { label, value in value.map { "\(label): \($0)" } }

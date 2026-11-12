@@ -34,7 +34,8 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         await center.notificationSettings().authorizationStatus == .denied
     }
 
-    func notifyIfNeeded(old: IPInfo?, new: IPInfo, mode: NotifyMode) {
+    func notifyIfNeeded(old: IPInfo?, new: IPInfo, mode: NotifyMode,
+                        oldLocation: DeviceLocation? = nil, newLocation: DeviceLocation? = nil) {
         guard let old, old.ip != new.ip else { return }
         let countryChanged = old.country != new.country
 
@@ -53,12 +54,26 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         content.body = [
             "\(old.ip) → \(new.ip)",
             [new.city, new.isp].compactMap { $0 }.joined(separator: " · "),
+            Self.movement(from: oldLocation, to: newLocation),
         ]
+        .compactMap { $0 }
         .filter { !$0.isEmpty }
         .joined(separator: "\n")
         content.sound = .default
 
         center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+    }
+
+    /// "📍 You're still in Lisbon" / "📍 You moved to Porto (275 km)".
+    private static func movement(from old: DeviceLocation?, to new: DeviceLocation?) -> String? {
+        guard let new else { return nil }
+        let place = new.city ?? new.country ?? "the same place"
+        guard let old else { return "📍 You're in \(place)" }
+        let meters = new.distance(to: old)
+        if meters < 5_000 { return "📍 You're still in \(place)" }
+        let distance = Measurement(value: meters, unit: UnitLength.meters)
+            .formatted(.measurement(width: .abbreviated, usage: .road))
+        return "📍 You moved to \(place) (\(distance))"
     }
 
     // Show banners even while the popover is open (app is "active").

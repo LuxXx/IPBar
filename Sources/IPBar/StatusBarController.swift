@@ -8,6 +8,7 @@ final class StatusBarController: NSObject {
     private let popover = NSPopover()
     private let model: IPModel
     private let settingsWindow: SettingsWindow
+    private let historyWindow = HistoryWindow()
     private var cancellables = Set<AnyCancellable>()
 
     init(model: IPModel) {
@@ -15,7 +16,11 @@ final class StatusBarController: NSObject {
         self.settingsWindow = SettingsWindow(model: model)
         super.init()
 
-        let host = NSHostingController(rootView: PopoverView(model: model) { [weak self] in self?.openSettings() })
+        let host = NSHostingController(rootView: PopoverView(
+            model: model,
+            openSettings: { [weak self] in self?.openSettings() },
+            openHistory: { [weak self] in self?.openHistory() }
+        ))
         host.sizingOptions = .preferredContentSize
         popover.contentViewController = host
         popover.behavior = .transient
@@ -63,12 +68,18 @@ final class StatusBarController: NSObject {
         menu.addItem(withTitle: "Refresh", action: #selector(refresh), keyEquivalent: "r").target = self
         menu.addItem(withTitle: "Copy IP", action: #selector(copyIP), keyEquivalent: "c").target = self
         menu.addItem(withTitle: "Show Log in Finder", action: #selector(showLog), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "History…", action: #selector(openHistory), keyEquivalent: "h").target = self
         menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil
+    }
+
+    @objc private func openHistory() {
+        popover.performClose(nil)
+        historyWindow.show()
     }
 
     @objc private func openSettings() {

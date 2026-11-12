@@ -111,23 +111,120 @@ enum NetworkInfo {
     }
 }
 
-/// macOS only reveals the Wi-Fi name to apps with Location Services permission.
-final class LocationPermission: NSObject, ObservableObject, CLLocationManagerDelegate {
-    static let shared = LocationPermission()
+/// The Mac's real position (via Apple's Wi-Fi positioning), rounded for privacy.
+struct DeviceLocation: Equatable {
+    var latitude: Double
+    var longitude: Double
+    var accuracy: Int           // meters, as reported by Core Location
+    var city: String?
+    var region: String?
+    var country: String?        // ISO code, e.g. "PT"
+
+    var coordinate: CLLocationCoordinate2D { CLLocationCoordinate2D(latitude: latitude, longitude: longitude) }
+    var flag: String { IPInfo.flag(for: country) }
+
+    var logFields: [String: Any] {
+        var fields: [String: Any] = [
+            "real_loc": "\(latitude),\(longitude)",
+            "real_accuracy_m": accuracy,
+        ]
+        fields["real_city"] = city
+        fields["real_region"] = region
+        fields["real_country"] = country
+        return fields
+    }
+
+    var displayName: String {
+        let place = [city, country.flatMap { Locale.current.localizedString(forRegionCode: $0) }]
+            .compactMap { $0 }
+            .joined(separator: ", ")
+        return place.isEmpty ? "\(latitude), \(longitude)" : "\(flag)  \(place)"
+    }
+
+    func distance(to other: DeviceLocation) -> CLLocationDistance {
+        CLLocation(latitude: latitude, longitude: longitude)
+            .distance(from: CLLocation(latitude: other.latitude, longitude: other.longitude))
+    }
+}
+
+/// Location Services access is needed for both the Wi-Fi name and the real location.
+final class LocationService: NSObject, ObservableObject, CLLocationManagerDelegate {
+    static let shared = LocationService()
 
     private let manager = CLLocationManager()
+    private let geocoder = CLGeocoder()
     @Published private(set) var status: CLAuthorizationStatus
+
+    private var waiters: [CheckedContinuation<CLLocation?, Never>] = []
+    private var requestID = 0
+    private var lastFix: CLLocation?
+    private var placeCache: [String: (city: String?, region: String?, country: String?)] = [:]
 
     private override init() {
         status = manager.authorizationStatus
         super.init()
         manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
     }
 
     var isAuthorized: Bool { status == .authorizedAlways || status == .authorized }
 
     func request() {
         manager.requestWhenInUseAuthorization()
+    }
+
+    /// Current position rounded to `decimals` places (2 ≈ 1 km), with city/country.
+    /// Must be called on the main thread.
+    func currentLocation(decimals: Int) async -> DeviceLocation? {
+        guard isAuthorized, let fix = await fix() else { return nil }
+        let factor = pow(10, Double(decimals))
+        let lat = (fix.coordinate.latitude * factor).rounded() / factor
+        let lon = (fix.coordinate.longitude * factor).rounded() / factor
+        var location = DeviceLocation(latitude: lat, longitude: lon, accuracy: Int(fix.horizontalAccuracy.rounded()))
+
+        // Geocode the rounded position (cached), so the exact one never leaves the Mac twice.
+        let key = String(format: "%.2f,%.2f", lat, lon)
+        if placeCache[key] == nil,
+           let placemark = try? await geocoder.reverseGeocodeLocation(CLLocation(latitude: lat, longitude: lon)).first {
+            placeCache[key] = (placemark.locality, placemark.administrativeArea, placemark.isoCountryCode)
+        }
+        if let place = placeCache[key] {
+            location.city = place.city
+            location.region = place.region
+            location.country = place.country
+        }
+        return location
+    }
+
+    private func fix() async -> CLLocation? {
+        if let lastFix, -lastFix.timestamp.timeIntervalSinceNow < 4 * 60 { return lastFix }
+        return await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+            guard waiters.count == 1 else { return }
+            requestID += 1
+            let id = requestID
+            manager.requestLocation()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+                if self?.requestID == id { self?.finish(nil) }
+            }
+        }
+    }
+
+    private func finish(_ location: CLLocation?) {
+        requestID += 1
+        let pending = waiters
+        waiters = []
+        pending.forEach { $0.resume(returning: location) }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let location = locations.last else { return }
+        lastFix = location
+        finish(location)
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        finish(nil)
     }
 
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {

@@ -30,7 +30,7 @@ final class SettingsWindow {
 struct SettingsView: View {
     @ObservedObject var model: IPModel
     @ObservedObject private var logger = IPLogger.shared
-    @ObservedObject private var location = LocationPermission.shared
+    @ObservedObject private var location = LocationService.shared
     @State private var notificationsDenied = false
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var moveError: String?
@@ -58,9 +58,17 @@ struct SettingsView: View {
 
             Section {
                 Toggle("Log Wi-Fi network name", isOn: $model.logWiFiName)
-                if model.logWiFiName && !location.isAuthorized {
+                Toggle("Log real location", isOn: $model.logLocation)
+                if model.logLocation {
+                    Picker("Location precision", selection: $model.locationPrecision) {
+                        Text("~10 km").tag(1)
+                        Text("~1 km").tag(2)
+                        Text("~100 m").tag(3)
+                    }
+                }
+                if (model.logWiFiName || model.logLocation) && !location.isAuthorized {
                     HStack {
-                        Text("macOS only shares the Wi-Fi name with apps that have Location Services access.")
+                        Text("The Wi-Fi name and real location need Location Services access.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Spacer()
@@ -99,7 +107,7 @@ struct SettingsView: View {
             } header: {
                 Text("Logging")
             } footer: {
-                Text("Keeping the log in iCloud Drive or Dropbox means it survives a new Mac.")
+                Text("The real location comes from macOS Wi-Fi positioning, so it stays accurate behind a VPN. Keeping the log in iCloud Drive or Dropbox means it survives a new Mac.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

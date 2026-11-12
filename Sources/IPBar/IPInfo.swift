@@ -12,7 +12,9 @@ struct IPInfo: Decodable, Equatable {
     let postal: String?
     let timezone: String?
 
-    var flag: String {
+    var flag: String { Self.flag(for: country) }
+
+    static func flag(for country: String?) -> String {
         guard let country, country.count == 2 else { return "🌐" }
         let scalars = country.uppercased().unicodeScalars.compactMap { Unicode.Scalar(127397 + $0.value) }
         return String(String.UnicodeScalarView(scalars))
