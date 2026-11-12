@@ -23,6 +23,8 @@ fi
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 lipo -create "${BINARIES[@]}" -output "$APP/Contents/MacOS/IPBar"
+# Drop debug-map symbols: they embed absolute build paths (incl. the user name).
+strip -S -x "$APP/Contents/MacOS/IPBar"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -59,7 +61,7 @@ case "$MODE" in
 --release)
     ZIP="IPBar-$VERSION.zip"
     rm -f "$ZIP"
-    ditto -c -k --keepParent "$APP" "$ZIP"
+    ditto -c -k --norsrc --noextattr --noqtn --keepParent "$APP" "$ZIP"
     echo "Packaged $PWD/$ZIP"
     ;;
 esac
