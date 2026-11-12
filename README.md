@@ -17,6 +17,15 @@ A tiny macOS menu bar app that shows your public IP with its country flag, power
 - **History log** for later analysis (see below)
 - Optional ipinfo.io token, launch at login
 
+## Install
+
+Download `IPBar-<version>.zip` from [Releases](https://github.com/LuxXx/IPBar/releases), unzip it and move `IPBar.app` to `/Applications`.
+
+The app isn't notarized by Apple, so macOS blocks it on first launch. Either:
+
+- open it once, then go to **System Settings → Privacy & Security** and click **Open Anyway**, or
+- run `xattr -dr com.apple.quarantine /Applications/IPBar.app`
+
 ## Build
 
 Requires macOS 14+ and the Swift toolchain (Xcode or Command Line Tools).
@@ -24,6 +33,7 @@ Requires macOS 14+ and the Swift toolchain (Xcode or Command Line Tools).
 ```sh
 ./build.sh            # builds IPBar.app in this folder
 ./build.sh --install  # also copies it to /Applications and launches it
+VERSION=1.1.0 ./build.sh --release  # universal build, zipped for a GitHub release
 ```
 
 The app is ad-hoc signed for local use.
